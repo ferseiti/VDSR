@@ -1,81 +1,109 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 from __future__ import print_function
 import keras
 from keras import backend as K
 from keras.models import Sequential, Model
 from keras.layers import Dense, Activation
-from keras.layers import Conv2D, MaxPooling2D, Input, Merge, ZeroPadding2D, merge, add
+from keras.layers import Conv2D, MaxPooling2D, Input, ZeroPadding2D, merge, add
 import tensorflow as tf
 from keras.models import load_model
 from keras import optimizers
 from keras import losses
 from keras.optimizers import SGD, Adam
-from keras.callbacks import ModelCheckpoint
+from keras.callbacks import ModelCheckpoint, Callback, callbacks
+from keras.preprocessing.image import ImageDataGenerator
 
 import os, glob, sys, threading
 import scipy.io
-from scipy import ndimage, misc
-import numpy as np
+import h5py
+from PIL import Image
+
+from tifffile import imread
+import matplotlib.pyplot as plt
+
+import time
+import numpy
 import re
 import math
+import argparse
 
-DATA_PATH = "./data/train/"
-IMG_SIZE = (41, 41, 1)
-BATCH_SIZE = 64
-EPOCHS = 100
-TRAIN_SCALES = [2, 3, 4]
-VALID_SCALES = [4]
+from keras.backend.tensorflow_backend import set_session
+
+import signal
+import time
+
+def readConfiguration(signalNumber, frame):
+    print ('(SIGHUP) reading configuration')
+    return
+
+def terminateProcess(signalNumber, frame):
+    print ('(SIGTERM) terminating the process')
+    sys.exit()
+
+def receiveSignal(signalNumber, frame):
+    print('Received:', signalNumber)
+    return
+
+DATA_PATH = "data/train_data.h5"
+LABEL_PATH = "data/label_data.h5"
+VAL_PATH = "data/validation.h5"
+VAL_LABEL_PATH = "data/validation_label.h5"
+TRAIN_SCALES = [2]
+VALID_SCALES = [2]
+
+class MyCallback(Callback):
+    
+    def __init__(self, model):
+         self.model_to_save = model
+
+    def on_epoch_end(self, epoch, logs=None):
+        lr = self.model.optimizer.lr
+        decay = self.model.optimizer.decay
+        iterations = self.model.optimizer.iterations
+        lr_with_decay = lr / (1. + decay * K.cast(iterations, K.dtype(decay)))
+        print('Learning rate with decay: {}'.format(K.eval(lr_with_decay)))
+        print('Decay: {}'.format(K.eval(decay)))
+        print('Initial learning rate: {}'.format(K.eval(lr)))
 
 def tf_log10(x):
   numerator = tf.log(x)
   denominator = tf.log(tf.constant(10, dtype=numerator.dtype))
   return numerator / denominator
 
-def load_images(directory):
-	images = []
-	for root, dirnames, filenames in os.walk(directory):
-	    for filename in filenames:
-	        if re.search("\.(jpg|jpeg|png|bmp|tiff)$", filename):
-	            filepath = os.path.join(root, filename)
-	            image = ndimage.imread(filepath, mode="L")
-	            images.append(image)
-	            
-	images = np.array(images)
-	array_shape = np.append(images.shape[0:3], 1)
-	images = np.reshape(images, (array_shape))
-
-	return images
+def load_images(path):
+    with h5py.File(path, 'r') as fd:
+        images = numpy.array(fd['data'])
+        images = ((images - images.min()) * 1.000 / (images.max() - images.min()))
+    return images
 
 def get_image_list(data_path, scales=[2, 3, 4]):
-	l = glob.glob(os.path.join(data_path,"*"))
-	# print(len(l))
-	l = [f for f in l if re.search("^\d+.mat$", os.path.basename(f))]
-	# print(len(l))
-	train_list = []
-	for f in l:
-		if os.path.exists(f):	
-			for i in range(len(scales)):
-				scale = scales[i]
-				string_scale = "_" + str(scale) + ".mat"
-				if os.path.exists(f[:-4]+string_scale): train_list.append([f, f[:-4]+string_scale])
-	return train_list
+    l = glob.glob(os.path.join(data_path,"*"))
+    print(len(l))
+    l = [f for f in l if re.search("^\d+.tif$", os.path.basename(f))]
+    print(len(l))
+    
+    train_list = []
+    for f in l:
+        if os.path.exists(f):
+            for i in range(len(scales)):
+                scale = scales[i]
+                string_scale = "_" + str(scale) + ".tif"
+                if os.path.exists(f[:-4]+string_scale): train_list.append([f, f[:-4]+string_scale])
+    print(l)
+    return train_list
 
-def get_image_batch(train_list, offset):
-	target_list = train_list[offset:offset+BATCH_SIZE]
-	input_list = []
-	gt_list = []
-	cbcr_list = []
-	for pair in target_list:
-		input_img = scipy.io.loadmat(pair[1])['patch']
-		gt_img = scipy.io.loadmat(pair[0])['patch']
-		input_list.append(input_img)
-		gt_list.append(gt_img)
-	input_list = np.array(input_list)
-	input_list.resize([BATCH_SIZE, IMG_SIZE[0], IMG_SIZE[1], 1])
-	gt_list = np.array(gt_list)
-	gt_list.resize([BATCH_SIZE, IMG_SIZE[0], IMG_SIZE[1], 1])
-	return input_list, gt_list
+def resize_data(train_data):
+    
+    batch_x = []
+    for t in train_data:
+        x = numpy.zeros(img_size)
+        #x[:,:,0] = misc.imresize(t[:,:,0], size=(img_size[0],img_size[1]), interp='bicubic')
+        x[:,:,0] = numpy.array(Image.fromarray(t[:,:,0]).resize((img_size[0],img_size[1]), Image.BICUBIC))
+        batch_x.append(x)
+    batch_x = numpy.array(batch_x)
+    
+    return batch_x
 
 class threadsafe_iter:
     """Takes an iterator/generator and makes it thread-safe by
@@ -100,96 +128,240 @@ def threadsafe_generator(f):
         return threadsafe_iter(f(*a, **kw))
     return g
 
-@threadsafe_generator
-def image_gen(target_list):
-	while True:
-		for step in range(len(target_list)//BATCH_SIZE):
-			offset = step*BATCH_SIZE
-			batch_x, batch_y = get_image_batch(target_list, offset)
-			yield (batch_x, batch_y)
-
-
 def PSNR(y_true, y_pred):
-	max_pixel = 1.0
-	return 10.0 * tf_log10((max_pixel ** 2) / (K.mean(K.square(y_pred - y_true)))) 
+    max_pixel = 1.0
+    return 10.0 * tf_log10((max_pixel ** 2) / (K.mean(K.square(y_pred - y_true)))) 
 
+# SSIM loss function
+def ssim(y_true, y_pred):
+  return tf.reduce_mean(tf.image.ssim(y_true, y_pred, 2.0))
 
+def ssim_metric(y_true, y_pred):
+    # source: https://gist.github.com/Dref360/a48feaecfdb9e0609c6a02590fd1f91b
+
+    y_true = tf.transpose(y_true, [0, 2, 3, 1])
+    y_pred = tf.transpose(y_pred, [0, 2, 3, 1])
+    patches_true = tf.extract_image_patches(y_true, [1, 5, 5, 1], [1, 2, 2, 1], [1, 1, 1, 1], "SAME")
+    patches_pred = tf.extract_image_patches(y_pred, [1, 5, 5, 1], [1, 2, 2, 1], [1, 1, 1, 1], "SAME")
+
+    u_true = K.mean(patches_true, axis=3)
+    u_pred = K.mean(patches_pred, axis=3)
+    var_true = K.var(patches_true, axis=3)
+    var_pred = K.var(patches_pred, axis=3)
+    std_true = K.sqrt(var_true)
+    std_pred = K.sqrt(var_pred)
+    c1 = 0.01 ** 2
+    c2 = 0.03 ** 2
+    ssim = (2 * u_true * u_pred + c1) * (2 * std_pred * std_true + c2)
+    denom = (u_true ** 2 + u_pred ** 2 + c1) * (var_pred + var_true + c2)
+    ssim /= denom
+    ssim = tf.where(tf.is_nan(ssim), K.zeros_like(ssim), ssim)
+    return ssim
 
 # Get the training and testing data
-train_list = get_image_list("./data/train/", scales=TRAIN_SCALES)
+# train_list = get_image_list("./data/x/", scales=TRAIN_SCALES)
 
-test_list = get_image_list("./data/test/Set5/", scales=VALID_SCALES)
+# test_list = get_image_list("./data/val/", scales=VALID_SCALES)
+
+def model_train(img_size, batch_size, epochs, optimizer, learning_rate, style=2):
+
+    print('Style {}.'.format(style))
+
+    if style == 1:
+        input_img = Input(shape=img_size)
+
+        #model = Sequential()
+
+        model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal', input_shape=img_size)(input_img)
+        model = Activation('relu')(model)
+        model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+        model = Activation('relu')(model)
+        model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+        model = Activation('relu')(model)
+        model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+        model = Activation('relu')(model)
+        model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+        model = Activation('relu')(model)
+
+        model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+        model = Activation('relu')(model)
+        model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+        model = Activation('relu')(model)
+        model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+        model = Activation('relu')(model)
+        model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+        model = Activation('relu')(model)
+        model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+        model = Activation('relu')(model)
+
+        model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+        model = Activation('relu')(model)
+        model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+        model = Activation('relu')(model)
+        model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+        model = Activation('relu')(model)
+        model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+        model = Activation('relu')(model)
+        model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+        model = Activation('relu')(model)
+
+        model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+        model = Activation('relu')(model)
+        model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+        model = Activation('relu')(model)
+        model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+        model = Activation('relu')(model)
+        model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+        model = Activation('relu')(model)
+        model = Conv2D(1, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+        res_img = model
+
+        output_img = merge.Subtract()([res_img, input_img])
+
+        model = Model(input_img, output_img)
+
+        #model.load_weights('vdsr_model_edges.h5')
+
+        adam = Adam(lr=0.00001)
+        #sgd = SGD(lr=1e-3, momentum=0.9, decay=1e-4, nesterov=False)
+        sgd = SGD(lr=0.01, momentum=0.9, decay=0.001, nesterov=False)
+        #model.compile(sgd, loss='mse', metrics=[PSNR, "accuracy"])
+        model.compile(adam, loss='mse', metrics=[ssim, ssim_metric, PSNR, "accuracy"])
+
+        model.summary()
+
+    else:
+
+        input_img = Input(shape=img_size)
+
+        model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(input_img)
+        model_0 = Activation('relu')(model)
+
+        total_conv = 22  # should be even number
+        total_conv -= 2  # subtract first and last
+        residual_block_num = 5  # should be even number
+
+        for _ in range(residual_block_num):  # residual block
+            model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model_0)
+            model = Activation('relu')(model)
+            for _ in range(int(total_conv/residual_block_num)-1):
+                model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+                model = Activation('relu')(model)
+                model_0 = add([model, model_0])
+
+        model = Conv2D(1, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+        res_img = model
+        output_img = merge.Add()([res_img, input_img])
+
+        model = Model(input_img, output_img)
+
+        # model.load_weights('./checkpoints/weights-improvement-20-26.93.hdf5')
+
+        adam = Adam(lr=learning_rate)
+        # sgd = SGD(lr=1e-7, momentum=0.9, decay=1e-2, nesterov=False)
+        sgd = SGD(lr=learning_rate, momentum=0.9, decay=1e-2, nesterov=False)
+        if optimizer == 0:
+            model.compile(adam, loss='mse', metrics=[ssim, ssim_metric, PSNR, "accuracy"])
+        else:
+            model.compile(sgd, loss='mse', metrics=[ssim, ssim_metric, PSNR, "accuracy"])
 
 
-input_img = Input(shape=IMG_SIZE)
+        model.summary()
 
-model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(input_img)
-model = Activation('relu')(model)
-model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
-model = Activation('relu')(model)
-model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
-model = Activation('relu')(model)
-model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
-model = Activation('relu')(model)
-model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
-model = Activation('relu')(model)
+    mycallback = MyCallback(model)
+    timestamp = time.strftime("%m%d-%H%M", time.localtime(time.time()))
+    csv_logger = callbacks.CSVLogger('data/callbacks/training_{}.log'.format(timestamp))
+    filepath="./checkpoints/weights-improvement-{epoch:03d}-{PSNR:.2f}.hdf5"
+    checkpoint = ModelCheckpoint(filepath, monitor=PSNR, verbose=1, mode='max')
+    callbacks_list = [mycallback, checkpoint, csv_logger]
 
-model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
-model = Activation('relu')(model)
-model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
-model = Activation('relu')(model)
-model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
-model = Activation('relu')(model)
-model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
-model = Activation('relu')(model)
-model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
-model = Activation('relu')(model)
+    print('Loading training data.')
+    x = load_images(DATA_PATH)
+    print('Loading data label.')
+    y = load_images(LABEL_PATH)
+    print('Loading validation data.')
+    val = load_images(VAL_PATH)
+    print('Loading validation label.')
+    val_label = load_images(VAL_LABEL_PATH)
 
-model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
-model = Activation('relu')(model)
-model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
-model = Activation('relu')(model)
-model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
-model = Activation('relu')(model)
-model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
-model = Activation('relu')(model)
-model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
-model = Activation('relu')(model)
+    print(x.shape)
+    print(y.shape)
+    print(val.shape)
+    print(val_label.shape)
 
-model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
-model = Activation('relu')(model)
-model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
-model = Activation('relu')(model)
-model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
-model = Activation('relu')(model)
-model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
-model = Activation('relu')(model)
-model = Conv2D(1, (3, 3), padding='same', kernel_initializer='he_normal')(model)
-res_img = model
 
-output_img = add([res_img, input_img])
+    with open('./model/vdsr_architecture.json', 'w') as f:
+        f.write(model.to_json())
 
-model = Model(input_img, output_img)
+    datagen = ImageDataGenerator(
+                                 horizontal_flip=True, 
+                                 vertical_flip=True,)
 
-# model.load_weights('./checkpoints/weights-improvement-20-26.93.hdf5')
+    history = model.fit_generator(datagen.flow(x, y, batch_size=batch_size),
+                        steps_per_epoch=len(x) // batch_size,
+                        validation_data=(val, val_label),
+                        validation_steps=len(val) // batch_size,
+                        epochs=epochs, 
+                        callbacks=callbacks_list, 
+                        verbose=1, 
+                        shuffle=True,
+                        workers=256,
+                        use_multiprocessing=True)
 
-adam = Adam(lr=0.00001)
-sgd = SGD(lr=1e-5, momentum=0.9, decay=1e-4, nesterov=False)
-model.compile(adam, loss='mse', metrics=[PSNR, "accuracy"])
+    print("Done training!!!")
 
-model.summary()
+    print("Saving the final model ...")
 
-filepath="./checkpoints/weights-improvement-{epoch:02d}-{PSNR:.2f}.hdf5"
-checkpoint = ModelCheckpoint(filepath, monitor=PSNR, verbose=1, mode='max')
-callbacks_list = [checkpoint]
+    model.save('vdsr_model.h5')  # creates a HDF5 file 
+    del model  # deletes the existing model
 
-model.fit_generator(image_gen(train_list), steps_per_epoch=len(train_list) // BATCH_SIZE,  \
-					validation_data=image_gen(test_list), validation_steps=len(train_list) // BATCH_SIZE, \
-					epochs=EPOCHS, workers=8, callbacks=callbacks_list)
+    plt.plot(history.history['accuracy'])
+    plt.plot(history.history['val_accuracy'])
+    plt.title('Model accuracy')
+    plt.ylabel('Accuracy')
+    plt.xlabel('Epoch')
+    plt.legend(['Train', 'Validation'], loc='upper left')
+    # plt.show()
+    plt.savefig('accuracy.png')
 
-print("Done training!!!")
+    # Plot training & validation loss values
+    plt.plot(history.history['loss'])
+    plt.plot(history.history['val_loss'])
+    plt.title('Model loss')
+    plt.ylabel('Loss')
+    plt.xlabel('Epoch')
+    plt.legend(['Train', 'Validation'], loc='upper left')
+    # plt.show()
+    plt.savefig('loss.png')
 
-print("Saving the final model ...")
+    plt.plot(history.history['PSNR'])
+    plt.plot(history.history['val_PSNR'])
+    plt.title('Model PSNR')
+    plt.ylabel('PSNR')
+    plt.xlabel('Epoch')
+    plt.legend(['Train', 'Validation'], loc='upper left')
+    # plt.show()
+    plt.savefig('PSNR.png')
 
-model.save('vdsr_model.h5')  # creates a HDF5 file 
-del model  # deletes the existing model
+if __name__ == '__main__':
+
+    parser = argparse.ArgumentParser(description = 'Train a VDSR.')
+    parser.add_argument('-s', '--size', help='Size of one dimension of the square image.', required=True, type=int)
+    parser.add_argument('-b', '--batch-size', help='Batch size.', required=True, type=int, default=64)
+    parser.add_argument('-e', '--epochs', help='Amount of epochs.', required=True, type=int, default=100)
+    parser.add_argument('-o', '--optimizer', help='0: Adam, 1: SGD.', required=True, type=int, choices={0, 1}, default=0)
+    parser.add_argument('-l', '--lr', help='Learning rate value.', required=True, type=float, default=0.00001)
+
+    config = tf.ConfigProto()
+    config.gpu_options.per_process_gpu_memory_fraction = 0.5
+    set_session(tf.Session(config=config))
+
+    arguments = parser.parse_args()
+
+    batch_size = arguments.batch_size
+    size = (arguments.size, arguments.size, 1)
+    epochs = arguments.epochs
+    optimizer = arguments.optimizer
+    learning_rate = arguments.lr
+
+    model_train(size, batch_size, epochs, optimizer, learning_rate, 2)
