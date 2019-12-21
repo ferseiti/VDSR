@@ -7,14 +7,16 @@ import argparse
 def main(path, output, stride, patch, random=False):
 
     count = 0
-
+    SCALE = 2
     print('Data will be at {} with stride {}, with patch size {}.'.format(path, stride, patch))
 
     rand = numpy.random.randint(2)
     if rand == 0:
+        print(path + 'recon_even.h5')
         with h5py.File(path + 'recon_even.h5', 'r') as fd:
             f = numpy.array(fd['images'])
     else:
+        print(path + 'recon_odd.h5')
         with h5py.File(path + 'recon_odd.h5', 'r') as fd:
             f = numpy.array(fd['images'])
             
@@ -23,12 +25,10 @@ def main(path, output, stride, patch, random=False):
 
     f_rescale = numpy.empty((f.shape[0]*2, f.shape[1], f.shape[2]*2))
 
-    for i in range(f.shape[1]):
-        f_rescale[:,i,:] = cv2.resize(f[:,i,:], (f.shape[0]*2, f.shape[2]*2), interpolation=cv2.INTER_CUBIC) 
-    # f_rescale = cv2.normalize(f_rescale, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-    f = ((f_rescale - f_rescale.min()) * 1.0000000 / (f_rescale.max() - f_rescale.min()))
-    g = ((g - g.min()) * 1.0000000 / (g.max() - g.min()))
-    del(f_rescale)
+    # for i in range(f.shape[1]):
+    #     # f_rescale[:,i,:] = cv2.resize(f[:,i,:], (f.shape[0]*2, f.shape[2]*2), interpolation=cv2.INTER_CUBIC)
+    # # f_rescale = cv2.normalize(f_rescale, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+    # # f = f_rescale
 
     print('Data shape: {}'.format(f.shape))
     print('Label shape: {}'.format(g.shape))
@@ -38,11 +38,12 @@ def main(path, output, stride, patch, random=False):
 
     # total_patches = ((shape[1]-patch)//stride+1)*((shape[0]-patch)//stride+1)*((shape[2]-patch)//stride+1)
 
-    f_total_patches = (((f_shape[0] - patch)//stride) + 1)**2
-    f_total_patches *= f_shape[1]
+    # f_total_patches = (((f_shape[0] - patch)//stride) + 1)**2
+    # f_total_patches *= f_shape[1]
 
-    g_total_patches = (((g_shape[0] - patch)//stride) + 1)**2
+    g_total_patches = (((g_shape[0] - (patch*2))//stride) + 1)**2
     g_total_patches *= g_shape[1]
+    f_total_patches = g_total_patches
 
     print('Total data patches {}'.format(f_total_patches))
     print('Total label patches {}'.format(g_total_patches))
@@ -50,18 +51,47 @@ def main(path, output, stride, patch, random=False):
     data = numpy.empty((int(f_total_patches), patch, patch, 1))
     label = numpy.empty((int(g_total_patches), patch, patch, 1))
 
-    for i in range(int(f_shape[1])):
-        for j in range(0, f_shape[0] - patch, stride):
-            for k in range(0, f_shape[2] - patch, stride):
-                data[count, :, :, 0] = f[j:j+patch, i, k:k+patch]
-                count+=1
+    import warnings
+    numpy.seterr(all='raise')
+    warnings.filterwarnings('error')
 
+    found = False
+    for i in range(int(g_shape[1])):
+        if not found:
+            print('Not found yet')
+            for j in range(0, g_shape[0] - patch, stride):
+                if not found:
+                    print('Not found yet')
+                    for k in range(0, g_shape[2] - patch, stride):
+                        if not (f[j:j+patch, i, k:k+patch].max() - f[j:j+patch, i, k:k+patch].min() == 0.0) or not (g[j:j+patch, i, k:k+patch].max() - g[j:j+patch, i, k:k+patch].min() == 0.0):
+                            good_data = cv2.resize(f[j//SCALE:j+patch//SCALE, i, k//SCALE:k//SCALE+patch//SCALE], (patch,patch), interpolation=cv2.INTER_CUBIC)
+                            good_label = g[j:j+patch, i, k:k+patch]
+                            good_data = (good_data - good_data.min()) * 1.0000000 / (good_data.max() - good_data.min())
+                            good_label = (good_label - good_label.min()) * 1.0000000 / (good_label.max() - good_label.min())
+                            found = True
+                            break
+                else:
+                    break
+        else:
+            break
     count = 0
+    
     for i in range(int(g_shape[1])):
         for j in range(0, g_shape[0] - patch, stride):
             for k in range(0, g_shape[2] - patch, stride):
+                data[count, :, :, 0] = cv2.resize(f[j//SCALE:j+patch//SCALE, i, k//SCALE:k//SCALE+patch//SCALE], (patch,patch), interpolation=cv2.INTER_CUBIC)
                 label[count, :, :, 0] = g[j:j+patch, i, k:k+patch]
-                count+=1
+                try:
+                    data[count, :, :, 0] = ((data[count, :, :, 0] - data[count, :, :, 0].min()) * 1.0000000 / (data[count, :, :, 0].max() - data[count, :, :, 0].min()))
+                    label[count, :, :, 0] = ((label[count, :, :, 0] - label[count, :, :, 0].min()) * 1.0000000 / (label[count, :, :, 0].max() - label[count, :, :, 0].min()))
+                except:
+                    print(path)
+                    print((data[count, :, :, 0].max() - data[count, :, :, 0].min()), (label[count, :, :, 0].max() - label[count, :, :, 0].min()))
+                    data[count, :, :, 0] = good_data
+                    label[count, :, :, 0] = good_label
+                    print('This used the good one: {}'.format(count))
+                count += 1
+    print('last count: {}'.format(count))
 
     del(f)
     del(g)

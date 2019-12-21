@@ -1,20 +1,23 @@
 #!/bin/bash
 
-S=$1
-VAL_SAMPLES=$2
-STEP=$3
+S=32
 
-echo $1 $2 $3
+    for i in {0000..0003}; do
+        python3 prepare_data.py --path /ddn/beamline/Fernando/upscaling/talitas/data/${i}/ -s $S -p $S -o /ddn/beamline/Fernando/upscaling/talitas/data/'test'/${i}.h5 
+    done &
 
-if [ ! -z $S ] && [ ! -z $VAL_SAMPLES ] && [ ! -z $STEP ]; then
+    for i in {0004..0007}; do
+        python3 prepare_data.py --path /ddn/beamline/Fernando/upscaling/talitas/data/${i}/ -s $S -p $S -o /ddn/beamline/Fernando/upscaling/talitas/data/validation/${i}_validation.h5 
+    done &
 
-    python3 prepare_data.py -f /ddn/beamline/Fernando/upscaling/talitas/data/0001/recon.h5 -s $STEP -p $S -o $PWD/data/label_data.h5
-    python3 prepare_data.py -f /ddn/beamline/Fernando/upscaling/talitas/data/0001/recon_even.h5 -s $STEP -p $S -o $PWD/data/train_data.h5 -i
-    python3 prepare_data.py -f /ddn/beamline/Fernando/upscaling/talitas/data/0019/recon.h5 -s $STEP -p $S -o $PWD/data/validation_label.h5 --sample $VAL_SAMPLES
-    python3 prepare_data.py -f /ddn/beamline/Fernando/upscaling/talitas/data/0019/recon_even.h5 -s $STEP -p $S -o $PWD/data/validation.h5 --sample $VAL_SAMPLES -i
+    for i in {0008..0011}; do
+        python3 prepare_data.py --path /ddn/beamline/Fernando/upscaling/talitas/data/${i}/ -s $S -p $S -o /ddn/beamline/Fernando/upscaling/talitas/data/train/${i}.h5
+    done &
 
-else
-    echo 'Missing arguments'
-    echo $0 SIZE VAL_SAMPLES STEP
-    exit
-fi
+    for i in {0012..0015}; do
+        python3 prepare_data.py --path /ddn/beamline/Fernando/upscaling/talitas/data/${i}/ -s $S -p $S -o /ddn/beamline/Fernando/upscaling/talitas/data/train/${i}.h5
+    done &
+
+    for i in {0016..0019}; do
+        python3 prepare_data.py --path /ddn/beamline/Fernando/upscaling/talitas/data/${i}/ -s $S -p $S -o /ddn/beamline/Fernando/upscaling/talitas/data/train/${i}.h5
+    done
