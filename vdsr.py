@@ -4,13 +4,13 @@ from __future__ import print_function
 import keras
 from keras import backend as K
 from keras.models import Sequential, Model
-from keras.layers import Dense, Activation
+from keras.layers import Dense, Activation, Lambda
 from keras.layers import Conv2D, MaxPooling2D, Input, ZeroPadding2D, merge, add
 import tensorflow as tf
 from keras.models import load_model
 from keras import optimizers
 from keras import losses
-from keras.optimizers import SGD, Adam
+from keras.optimizers import SGD, Adam, Adagrad, Adadelta
 from keras.callbacks import ModelCheckpoint, Callback, callbacks
 from keras.preprocessing.image import ImageDataGenerator
 
@@ -50,7 +50,7 @@ LABEL_PATH = "data/label_data.h5"
 VAL_PATH = "data/validation.h5"
 VAL_LABEL_PATH = "data/validation_label.h5"
 TRAIN_SCALES = [2]
-VALID_SCALES = [2]
+same_SCALES = [2]
 
 class MyCallback(Callback):
     
@@ -93,6 +93,18 @@ def get_image_list(data_path, scales=[2, 3, 4]):
     print(l)
     return train_list
 
+def get_image_batch(h5_file_path, offset, batch_size):
+
+    print('Reading file {}, offset {}'.format(h5_file_path, offset))
+    sys.stdout.write("\033[F") #back to previous line
+    sys.stdout.write("\033[K") #clear line
+    with h5py.File(h5_file_path) as h5fd:
+        shape = h5fd['data'].shape
+        data = numpy.array(h5fd['data'][offset:offset+batch_size])
+        label = numpy.array(h5fd['label'][offset:offset+batch_size])
+
+    return data, label, shape
+
 def resize_data(train_data):
     
     batch_x = []
@@ -116,9 +128,9 @@ class threadsafe_iter:
     def __iter__(self):
         return self
 
-    def next(self):
+    def __next__(self):
         with self.lock:
-            return self.it.next()
+            return self.it.__next__()
 
 
 def threadsafe_generator(f):
@@ -128,9 +140,24 @@ def threadsafe_generator(f):
         return threadsafe_iter(f(*a, **kw))
     return g
 
+@threadsafe_generator
+def image_gen(target_list, batch_size):
+    offset = 0
+    while True:
+        for target in target_list:
+            batch_x, batch_y, shape = get_image_batch(target, offset, batch_size)
+            offset += batch_size
+            if offset >= shape[0]:
+                offset = 0
+            yield (batch_x, batch_y)
+
 def PSNR(y_true, y_pred):
     max_pixel = 1.0
     return 10.0 * tf_log10((max_pixel ** 2) / (K.mean(K.square(y_pred - y_true)))) 
+
+def PSNR_loss(y_true, y_pred):
+    max_pixel = 1.0
+    return -10.0 * tf_log10((max_pixel ** 2) / (K.mean(K.square(y_pred - y_true)))) 
 
 # SSIM loss function
 def ssim(y_true, y_pred):
@@ -158,12 +185,31 @@ def ssim_metric(y_true, y_pred):
     ssim = tf.where(tf.is_nan(ssim), K.zeros_like(ssim), ssim)
     return ssim
 
+
+def crop(dimension, start, end):
+    ## from https://github.com/keras-team/keras/issues/890#issuecomment-319671916
+    # Crops (or slices) a Tensor on a given dimension from start to end
+    # example : to crop tensor x[:, :, 5:10]
+    # call slice(2, 5, 10) as you want to crop on the second dimension
+    def func(x):
+        if dimension == 0:
+            return x[start: end]
+        if dimension == 1:
+            return x[:, start: end]
+        if dimension == 2:
+            return x[:, :, start: end]
+        if dimension == 3:
+            return x[:, :, :, start: end]
+        if dimension == 4:
+            return x[:, :, :, :, start: end]
+    return Lambda(func)
+
 # Get the training and testing data
 # train_list = get_image_list("./data/x/", scales=TRAIN_SCALES)
 
-# test_list = get_image_list("./data/val/", scales=VALID_SCALES)
+# test_list = get_image_list("./data/val/", scales=same_SCALES)
 
-def model_train(img_size, batch_size, epochs, optimizer, learning_rate, style=2):
+def model_train(img_size, batch_size, epochs, optimizer, learning_rate, train_list, validation_list, style=2):
 
     print('Style {}.'.format(style))
 
@@ -216,13 +262,13 @@ def model_train(img_size, batch_size, epochs, optimizer, learning_rate, style=2)
         model = Conv2D(1, (3, 3), padding='same', kernel_initializer='he_normal')(model)
         res_img = model
 
-        output_img = merge.Subtract()([res_img, input_img])
+        output_img = merge.Add()([res_img, input_img])
 
         model = Model(input_img, output_img)
 
         #model.load_weights('vdsr_model_edges.h5')
 
-        adam = Adam(lr=0.00001)
+        adam = Adam(lr=0.000005)
         #sgd = SGD(lr=1e-3, momentum=0.9, decay=1e-4, nesterov=False)
         sgd = SGD(lr=0.01, momentum=0.9, decay=0.001, nesterov=False)
         #model.compile(sgd, loss='mse', metrics=[PSNR, "accuracy"])
@@ -234,7 +280,7 @@ def model_train(img_size, batch_size, epochs, optimizer, learning_rate, style=2)
 
         input_img = Input(shape=img_size)
 
-        model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(input_img)
+        model = Conv2D(64, (3, 3), padding='valid', kernel_initializer='he_normal')(input_img)
         model_0 = Activation('relu')(model)
 
         total_conv = 22  # should be even number
@@ -249,21 +295,27 @@ def model_train(img_size, batch_size, epochs, optimizer, learning_rate, style=2)
                 model = Activation('relu')(model)
                 model_0 = add([model, model_0])
 
-        model = Conv2D(1, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+        model = Conv2D(1, (3, 3), padding='valid', kernel_initializer='he_normal')(model)
         res_img = model
-        output_img = merge.Add()([res_img, input_img])
 
+        input_img1 = crop(1,2,-2)(input_img)
+        input_img1 = crop(2,2,-2)(input_img1)
+
+        print(input_img.shape)
+        print(input_img1.shape)
+        output_img = merge.Add()([res_img, input_img1])
+        # output_img = res_img
         model = Model(input_img, output_img)
 
-        # model.load_weights('./checkpoints/weights-improvement-20-26.93.hdf5')
-
-        adam = Adam(lr=learning_rate)
+        # model.load_weights('./vdsr_model_edges.h5')
+        # adam = Adam(lr=learning_rate)
+        adam = Adadelta()
         # sgd = SGD(lr=1e-7, momentum=0.9, decay=1e-2, nesterov=False)
-        sgd = SGD(lr=learning_rate, momentum=0.9, decay=1e-2, nesterov=False)
+        sgd = SGD(lr=learning_rate, momentum=0.9, decay=1e-4, nesterov=False, clipnorm=1)
         if optimizer == 0:
-            model.compile(adam, loss='mse', metrics=[ssim, ssim_metric, PSNR, "accuracy"])
+            model.compile(adam, loss='mse', metrics=[ssim, ssim_metric, PSNR])
         else:
-            model.compile(sgd, loss='mse', metrics=[ssim, ssim_metric, PSNR, "accuracy"])
+            model.compile(sgd, loss='mse', metrics=[ssim, ssim_metric, PSNR])
 
 
         model.summary()
@@ -275,38 +327,48 @@ def model_train(img_size, batch_size, epochs, optimizer, learning_rate, style=2)
     checkpoint = ModelCheckpoint(filepath, monitor=PSNR, verbose=1, mode='max')
     callbacks_list = [mycallback, checkpoint, csv_logger]
 
-    print('Loading training data.')
-    x = load_images(DATA_PATH)
-    print('Loading data label.')
-    y = load_images(LABEL_PATH)
-    print('Loading validation data.')
-    val = load_images(VAL_PATH)
-    print('Loading validation label.')
-    val_label = load_images(VAL_LABEL_PATH)
+    # print('Loading training data.')
+    # x = load_images(DATA_PATH)
+    # print('Loading data label.')
+    # y = load_images(LABEL_PATH)
+    # print('Loading validation data.')
+    # val = load_images(VAL_PATH)
+    # print('Loading validation label.')
+    # val_label = load_images(VAL_LABEL_PATH)
 
-    print(x.shape)
-    print(y.shape)
-    print(val.shape)
-    print(val_label.shape)
-
+    # print(x.shape)
+    # print(y.shape)
+    # print(val.shape)
+    # print(val_label.shape)
 
     with open('./model/vdsr_architecture.json', 'w') as f:
         f.write(model.to_json())
 
-    datagen = ImageDataGenerator(
-                                 horizontal_flip=True, 
-                                 vertical_flip=True,)
+    # datagen = ImageDataGenerator(rotation_range=45,
+    #                              zoom_range=0.15,
+    #                              horizontal_flip=True,
+    #                              vertical_flip=True)
 
-    history = model.fit_generator(datagen.flow(x, y, batch_size=batch_size),
-                        steps_per_epoch=len(x) // batch_size,
-                        validation_data=(val, val_label),
-                        validation_steps=len(val) // batch_size,
-                        epochs=epochs, 
-                        callbacks=callbacks_list, 
-                        verbose=1, 
-                        shuffle=True,
-                        workers=256,
-                        use_multiprocessing=True)
+    # history = model.fit_generator(datagen.flow(x, y, batch_size=batch_size),
+    #                     steps_per_epoch=len(x) // batch_size,
+    #                     validation_data=(val, val_label),
+    #                     validation_steps=len(val) // batch_size,
+    #                     epochs=epochs, 
+    #                     callbacks=callbacks_list, 
+    #                     verbose=1, 
+    #                     shuffle=True,
+    #                     workers=256,
+    #                     use_multiprocessing=True)
+    
+    history = model.fit_generator(image_gen(train_list, batch_size=batch_size), 
+                        steps_per_epoch=384400*(len(train_list))//batch_size,
+                        # steps_per_epoch=4612800//batch_size,
+                        validation_data=image_gen(validation_list,batch_size=batch_size),
+                        validation_steps=384400*(len(validation_list))// batch_size,
+                        epochs=epochs,
+                        workers=1024,
+                        callbacks=callbacks_list,
+                        verbose=1)
 
     print("Done training!!!")
 
@@ -315,14 +377,14 @@ def model_train(img_size, batch_size, epochs, optimizer, learning_rate, style=2)
     model.save('vdsr_model.h5')  # creates a HDF5 file 
     del model  # deletes the existing model
 
-    plt.plot(history.history['accuracy'])
-    plt.plot(history.history['val_accuracy'])
-    plt.title('Model accuracy')
-    plt.ylabel('Accuracy')
-    plt.xlabel('Epoch')
-    plt.legend(['Train', 'Validation'], loc='upper left')
-    # plt.show()
-    plt.savefig('accuracy.png')
+    # plt.plot(history.history['accuracy'])
+    # plt.plot(history.history['val_accuracy'])
+    # plt.title('Model accuracy')
+    # plt.ylabel('Accuracy')
+    # plt.xlabel('Epoch')
+    # plt.legend(['Train', 'validation'], loc='upper left')
+    # # plt.show()
+    # plt.savefig('accuracy.png')
 
     # Plot training & validation loss values
     plt.plot(history.history['loss'])
@@ -330,7 +392,7 @@ def model_train(img_size, batch_size, epochs, optimizer, learning_rate, style=2)
     plt.title('Model loss')
     plt.ylabel('Loss')
     plt.xlabel('Epoch')
-    plt.legend(['Train', 'Validation'], loc='upper left')
+    plt.legend(['Train', 'validation'], loc='upper left')
     # plt.show()
     plt.savefig('loss.png')
 
@@ -339,7 +401,7 @@ def model_train(img_size, batch_size, epochs, optimizer, learning_rate, style=2)
     plt.title('Model PSNR')
     plt.ylabel('PSNR')
     plt.xlabel('Epoch')
-    plt.legend(['Train', 'Validation'], loc='upper left')
+    plt.legend(['Train', 'validation'], loc='upper left')
     # plt.show()
     plt.savefig('PSNR.png')
 
@@ -351,6 +413,8 @@ if __name__ == '__main__':
     parser.add_argument('-e', '--epochs', help='Amount of epochs.', required=True, type=int, default=100)
     parser.add_argument('-o', '--optimizer', help='0: Adam, 1: SGD.', required=True, type=int, choices={0, 1}, default=0)
     parser.add_argument('-l', '--lr', help='Learning rate value.', required=True, type=float, default=0.00001)
+    parser.add_argument('-t', '--train-list', help='List of H5 files paths where the training data is located.', required=True)
+    parser.add_argument('-v', '--validation-list', help='List of H5 files paths where the validation data is located.', required=True)
 
     config = tf.ConfigProto()
     config.gpu_options.per_process_gpu_memory_fraction = 0.5
@@ -358,10 +422,28 @@ if __name__ == '__main__':
 
     arguments = parser.parse_args()
 
+    try:
+        with open(arguments.train_list) as tfd:
+            train_list = []
+            for l in tfd.readlines():
+                train_list.append(l.strip())
+    except Exception as e:
+        print('Insame training file list', file=sys.stderr)
+        sys.exit(e)
+    
+    try:
+        with open(arguments.validation_list) as vfd:
+            validation_list = []
+            for l in vfd.readlines():
+                validation_list.append(l.strip())
+    except Exception as e:
+        print('Insame validation file list', file=sys.stderr)
+        sys.exit(e)
+
     batch_size = arguments.batch_size
     size = (arguments.size, arguments.size, 1)
     epochs = arguments.epochs
     optimizer = arguments.optimizer
     learning_rate = arguments.lr
 
-    model_train(size, batch_size, epochs, optimizer, learning_rate, 2)
+    model_train(size, batch_size, epochs, optimizer, learning_rate, train_list, validation_list, 2)
