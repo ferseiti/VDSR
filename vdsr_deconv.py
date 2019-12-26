@@ -67,8 +67,8 @@ class MyCallback(Callback):
         print('Initial learning rate: {}'.format(K.eval(lr)))
 
 def tf_log10(x):
-  numerator = tf.log(x)
-  denominator = tf.log(tf.constant(10, dtype=numerator.dtype))
+  numerator = tf.math.log(x)
+  denominator = tf.math.log(tf.constant(10, dtype=numerator.dtype))
   return numerator / denominator
 
 def load_images(path):
@@ -93,17 +93,6 @@ def get_image_list(data_path, scales=[2, 3, 4]):
     print(l)
     return train_list
 
-def get_image_batch(h5_file_path, offset, batch_size):
-
-    print('Reading file {}, offset {}'.format(h5_file_path, offset), end='\r')
-    sys.stdout.write("\033[K") #clear line
-    with h5py.File(h5_file_path) as h5fd:
-        shape = h5fd['data'].shape
-        data = numpy.array(h5fd['data'][offset:offset+batch_size])
-        label = numpy.array(h5fd['label'][offset:offset+batch_size])
-
-    return data, label, shape
-
 def resize_data(train_data):
     
     batch_x = []
@@ -115,6 +104,17 @@ def resize_data(train_data):
     batch_x = numpy.array(batch_x)
     
     return batch_x
+
+def get_image_batch(h5_file_path, offset, batch_size):
+
+    #print('Reading file {}, offset {}'.format(h5_file_path, offset), end='\r')
+    #sys.stdout.write("\033[K") #clear line
+    with h5py.File(h5_file_path) as h5fd:
+        shape = h5fd['data'].shape
+        data = numpy.array(h5fd['data'][offset:offset+batch_size])
+        label = numpy.array(h5fd['label'][offset:offset+batch_size])
+
+    return data, label, shape
 
 class threadsafe_iter:
     """Takes an iterator/generator and makes it thread-safe by
@@ -147,10 +147,11 @@ def image_gen(target_list, batch_size):
         for target in target_list:
             batch_x, batch_y, shape = get_image_batch(target, offset, batch_size)
             if target_count == len(target_list):
-                offset += batch_size
+                #offset += batch_size
+                offset = numpy.random.randint(shape[0]-batch_size)
                 target_count = 0
             if offset >= shape[0]:
-                offset = 0
+                offset = numpy.random.randint(shape[0]-batch_size)
             target_count += 1
             yield (batch_x, batch_y)
 
@@ -171,8 +172,8 @@ def ssim_metric(y_true, y_pred):
 
     y_true = tf.transpose(y_true, [0, 2, 3, 1])
     y_pred = tf.transpose(y_pred, [0, 2, 3, 1])
-    patches_true = tf.extract_image_patches(y_true, [1, 5, 5, 1], [1, 2, 2, 1], [1, 1, 1, 1], "SAME")
-    patches_pred = tf.extract_image_patches(y_pred, [1, 5, 5, 1], [1, 2, 2, 1], [1, 1, 1, 1], "SAME")
+    patches_true = tf.image.extract_patches(y_true, [1, 5, 5, 1], [1, 2, 2, 1], [1, 1, 1, 1], "SAME")
+    patches_pred = tf.image.extract_patches(y_pred, [1, 5, 5, 1], [1, 2, 2, 1], [1, 1, 1, 1], "SAME")
 
     u_true = K.mean(patches_true, axis=3)
     u_pred = K.mean(patches_pred, axis=3)
@@ -185,7 +186,7 @@ def ssim_metric(y_true, y_pred):
     ssim = (2 * u_true * u_pred + c1) * (2 * std_pred * std_true + c2)
     denom = (u_true ** 2 + u_pred ** 2 + c1) * (var_pred + var_true + c2)
     ssim /= denom
-    ssim = tf.where(tf.is_nan(ssim), K.zeros_like(ssim), ssim)
+    ssim = tf.where(tf.math.is_nan(ssim), K.zeros_like(ssim), ssim)
     return ssim
 
 
@@ -300,17 +301,18 @@ def model_train(img_size, batch_size, epochs, optimizer, learning_rate, train_li
                 model = Activation('relu')(model)
                 model_0 = add([model, model_0])
 
-        model = Conv2DTranspose(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
-        model = Conv2D(1, (3, 3), padding='valid', kernel_initializer='he_normal')(model)
+        #model = Conv2DTranspose(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+        #model = Conv2D(1, (3, 3), padding='valid', kernel_initializer='he_normal')(model)
+        model = Conv2DTranspose(1, (3, 3), padding='valid', kernel_initializer='he_normal')(model)
         
         res_img = model
 
-        input_img1 = crop(1,2,-2)(input_img)
-        input_img1 = crop(2,2,-2)(input_img1)
+       # input_img1 = crop(1,2,-2)(input_img)
+       # input_img1 = crop(2,2,-2)(input_img1)
 
         print(input_img.shape)
-        print(input_img1.shape)
-        output_img = merge.Add()([res_img, input_img1])
+       # print(input_img1.shape)
+        output_img = merge.Add()([res_img, input_img])
         # output_img = res_img
         model = Model(input_img, output_img)
 
@@ -339,10 +341,10 @@ def model_train(img_size, batch_size, epochs, optimizer, learning_rate, train_li
 
     history = model.fit_generator(image_gen(train_list, batch_size=batch_size), 
                         #steps_per_epoch=384400*len(train_list) // batch_size,
-                        steps_per_epoch=384400// batch_size,
+                        steps_per_epoch=(705600//8)*len(train_list) // batch_size,
                         # steps_per_epoch=4612800//batch_size,
                         validation_data=image_gen(validation_list,batch_size=batch_size),
-                        validation_steps=384400 // (batch_size*5),
+                        validation_steps=(705600//8)*len(validation_list) // batch_size,
                         #validation_steps=384400*len(validation_list) // batch_size,
                         epochs=epochs,
                         workers=1024,
@@ -387,9 +389,11 @@ if __name__ == '__main__':
     parser.add_argument('-t', '--train-list', help='List of H5 files paths where the training data is located.', required=True)
     parser.add_argument('-v', '--validation-list', help='List of H5 files paths where the validation data is located.', required=True)
 
-    config = tf.ConfigProto()
-    config.gpu_options.per_process_gpu_memory_fraction = 0.5
-    set_session(tf.Session(config=config))
+
+    config = tf.compat.v1.ConfigProto(allow_soft_placement=True)
+    config.gpu_options.allow_growth = True
+    config.gpu_options.per_process_gpu_memory_fraction = 1.0
+    tf.compat.v1.keras.backend.set_session(tf.compat.v1.Session(config=config))
 
     arguments = parser.parse_args()
 
