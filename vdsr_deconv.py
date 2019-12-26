@@ -107,8 +107,8 @@ def resize_data(train_data):
 
 def get_image_batch(h5_file_path, offset, batch_size):
 
-    #print('Reading file {}, offset {}'.format(h5_file_path, offset), end='\r')
-    #sys.stdout.write("\033[K") #clear line
+    print('Reading file {}, offset {}'.format(h5_file_path, offset), end='\r')
+    sys.stdout.write("\033[K") #clear line
     with h5py.File(h5_file_path) as h5fd:
         shape = h5fd['data'].shape
         data = numpy.array(h5fd['data'][offset:offset+batch_size])
@@ -273,9 +273,7 @@ def model_train(img_size, batch_size, epochs, optimizer, learning_rate, train_li
         #model.load_weights('vdsr_model_edges.h5')
 
         adam = Adam(lr=0.000005)
-        #sgd = SGD(lr=1e-3, momentum=0.9, decay=1e-4, nesterov=False)
         sgd = SGD(lr=0.01, momentum=0.9, decay=0.001, nesterov=False)
-        #model.compile(sgd, loss='mse', metrics=[PSNR, "accuracy"])
         model.compile(adam, loss='mse', metrics=[ssim, ssim_metric, PSNR, "accuracy"])
 
         model.summary()
@@ -301,25 +299,23 @@ def model_train(img_size, batch_size, epochs, optimizer, learning_rate, train_li
                 model = Activation('relu')(model)
                 model_0 = add([model, model_0])
 
-        #model = Conv2DTranspose(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
-        #model = Conv2D(1, (3, 3), padding='valid', kernel_initializer='he_normal')(model)
-        model = Conv2DTranspose(1, (3, 3), padding='valid', kernel_initializer='he_normal')(model)
+        model = Conv2DTranspose(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+        model = Conv2D(1, (3, 3), padding='valid', kernel_initializer='he_normal')(model)
         
         res_img = model
 
-       # input_img1 = crop(1,2,-2)(input_img)
-       # input_img1 = crop(2,2,-2)(input_img1)
+        input_img1 = crop(1,2,-2)(input_img)
+        input_img1 = crop(2,2,-2)(input_img1)
 
         print(input_img.shape)
-       # print(input_img1.shape)
-        output_img = merge.Add()([res_img, input_img])
+        print(input_img1.shape)
+        output_img = merge.Add()([res_img, input_img1])
         # output_img = res_img
         model = Model(input_img, output_img)
 
         # model.load_weights('./vdsr_model_edges.h5')
         # adam = Adam(lr=learning_rate)
         adam = Adadelta()
-        # sgd = SGD(lr=1e-7, momentum=0.9, decay=1e-2, nesterov=False)
         sgd = SGD(lr=learning_rate, momentum=0.9, decay=1e-4, nesterov=False, clipnorm=1)
         if optimizer == 0:
             model.compile(adam, loss='mse', metrics=[ssim, ssim_metric, PSNR])
@@ -340,12 +336,9 @@ def model_train(img_size, batch_size, epochs, optimizer, learning_rate, train_li
         f.write(model.to_json())
 
     history = model.fit_generator(image_gen(train_list, batch_size=batch_size), 
-                        #steps_per_epoch=384400*len(train_list) // batch_size,
                         steps_per_epoch=(705600//8)*len(train_list) // batch_size,
-                        # steps_per_epoch=4612800//batch_size,
                         validation_data=image_gen(validation_list,batch_size=batch_size),
                         validation_steps=(705600//8)*len(validation_list) // batch_size,
-                        #validation_steps=384400*len(validation_list) // batch_size,
                         epochs=epochs,
                         workers=1024,
                         callbacks=callbacks_list,
