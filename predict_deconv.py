@@ -55,8 +55,10 @@ if __name__ == '__main__':
             model = Activation('relu')(model)
             model_0 = add([model, model_0])
 
-    model = Conv2DTranspose(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
-    model = Conv2D(1, (3, 3), padding='valid', kernel_initializer='he_normal')(model)
+    model = Conv2DTranspose(64, (3, 3), padding='valid', kernel_initializer='he_normal', use_bias=False)(model)
+    model = BatchNormalization()(model)
+    model = Activation('relu')(model)
+    model = Conv2D(1, (3, 3), padding='same', kernel_initializer='he_normal')(model)
         
     res_img = model
 
@@ -64,12 +66,13 @@ if __name__ == '__main__':
     input_img1 = crop(1,2,-2)(input_img)
     input_img1 = crop(2,2,-2)(input_img1)
     
-    output_img = merge.Add()([res_img, input_img1])
+    output_img = merge.Add()([res_img, input_img])
 
     model = Model(input_img, output_img)
 
     vdsr = model
 
+    vdsr.load_weights(w_path)
     li = os.listdir(img_path)
 
     target_path = '%s/%s/' % (img_path, dst_path)

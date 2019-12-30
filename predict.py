@@ -1,7 +1,7 @@
 import sys
 import os
 from keras.models import model_from_json, Model
-from keras.layers import Conv2D, MaxPooling2D, Input, ZeroPadding2D, Add, Subtract, Dense, Activation, add, merge
+from keras.layers import BatchNormalization, Conv2D, MaxPooling2D, Input, ZeroPadding2D, Add, Subtract, Dense, Activation, add, merge
 import numpy
 import cv2
 
@@ -37,7 +37,8 @@ if __name__ == '__main__':
 
     input_img = Input(shape=target_size+(1,))
 
-    model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(input_img)
+    model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal', use_bias=False)(input_img)
+    model = BatchNormalization()(model)
     model_0 = Activation('relu')(model)
 
     total_conv = 22  # should be even number
@@ -45,21 +46,25 @@ if __name__ == '__main__':
     residual_block_num = 5  # should be even number
 
     for _ in range(residual_block_num):  # residual block
-        model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model_0)
+        model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal', use_bias=False)(model_0)
+        model = BatchNormalization()(model)
         model = Activation('relu')(model)
         for _ in range(int(total_conv/residual_block_num)-1):
-            model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+            model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal', use_bias=False)(model)
+            model = BatchNormalization()(model)
             model = Activation('relu')(model)
             model_0 = add([model, model_0])
 
     model = Conv2D(1, (3, 3), padding='same', kernel_initializer='he_normal')(model)
     res_img = model
+
     output_img = merge.Subtract()([res_img, input_img])
 
     model = Model(input_img, output_img)
 
     vdsr = model
 
+    vdsr.load_weights(w_path)
     li = os.listdir(img_path)
 
     target_path = '%s/%s/' % (img_path, dst_path)
