@@ -1,10 +1,12 @@
 import sys
 import os
+import keras
 from keras.models import model_from_json, Model
 from keras.layers import Conv2D, Conv2DTranspose, MaxPooling2D, Input, ZeroPadding2D, Add, Subtract, Dense, Activation, add, merge, BatchNormalization
 import numpy
 import cv2
 
+from keras.optimizers import SGD, Adam, Adagrad, Adadelta
 from tifffile import imread, imsave
 
 # from scipy.misc import toimage, imread, imresize
@@ -50,15 +52,13 @@ if __name__ == '__main__':
         model = BatchNormalization()(model)
         model = Activation('relu')(model)
         for _ in range(int(total_conv/residual_block_num)-1):
-            model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal', use_bias=False)(model)
-            model = BatchNormalization()(model)
+            model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
             model = Activation('relu')(model)
             model_0 = add([model, model_0])
 
-    model = Conv2DTranspose(64, (3, 3), padding='valid', kernel_initializer='he_normal', use_bias=False)(model)
-    model = BatchNormalization()(model)
+    model = Conv2DTranspose(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
     model = Activation('relu')(model)
-    model = Conv2D(1, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+    model = Conv2D(1, (3, 3), padding='valid', kernel_initializer='he_normal')(model)
         
     res_img = model
 
@@ -66,13 +66,21 @@ if __name__ == '__main__':
     input_img1 = crop(1,2,-2)(input_img)
     input_img1 = crop(2,2,-2)(input_img1)
     
-    output_img = merge.Add()([res_img, input_img])
+    output_img = merge.Add()([res_img, input_img1])
 
     model = Model(input_img, output_img)
+    print(type(model))
+
+    adam = Adadelta()
+    
+    from vdsr_deconv import *
+    model.load_weights(w_path, by_name=True)
+    model.compile(adam, loss='mse', metrics=[ssim, ssim_metric, PSNR])
 
     vdsr = model
+    vdsr.summary()
 
-    vdsr.load_weights(w_path)
+    print(type(vdsr))
     li = os.listdir(img_path)
 
     target_path = '%s/%s/' % (img_path, dst_path)
@@ -82,7 +90,7 @@ if __name__ == '__main__':
             img = numpy.array(imread(os.path.join(img_path, filename)))
             img = cv2.resize(img, target_size, interpolation=cv2.INTER_CUBIC) 
             # img = imresize(img, target_size, interp='bicubic')
-            #img = numpy.array(img) / 127.5 - 1.
+            img = numpy.array(img) / 127.5 - 1.
             #img = numpy.array(img) / .5
             img = img.reshape((1,)+target_size+(1,))
             img = vdsr.predict(img)
