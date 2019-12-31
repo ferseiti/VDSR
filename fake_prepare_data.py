@@ -29,7 +29,7 @@ def main(path, output, stride, patch, random=False):
     # f_total_patches *= f_shape[1]
 
     g_total_patches = (((g_shape[0] - patch - 500)//stride) + 1)**2
-    g_total_patches *= g_shape[1] - 500
+    g_total_patches *= g_shape[1]
     f_total_patches = g_total_patches
 
     print('Total data patches {}'.format(f_total_patches))

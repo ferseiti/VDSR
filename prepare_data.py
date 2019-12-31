@@ -41,13 +41,15 @@ def main(path, output, stride, patch, random=False):
     # f_total_patches = (((f_shape[0] - patch)//stride) + 1)**2
     # f_total_patches *= f_shape[1]
 
-    g_total_patches = (((g_shape[0] - 500 - (patch*2))//stride) + 1)**2
-    g_total_patches *= g_shape[1] - 500
+    g_total_patches = (((g_shape[0] - 500 - patch)//stride) + 1)**2
+    g_total_patches *= g_shape[1]
     f_total_patches = g_total_patches
 
+    print(g_shape)
     print('Total data patches {}'.format(f_total_patches))
     print('Total label patches {}'.format(g_total_patches))
 
+    sys.exit()
     data = numpy.empty((int(f_total_patches), patch, patch, 1))
     label = numpy.empty((int(g_total_patches), patch, patch, 1))
 
