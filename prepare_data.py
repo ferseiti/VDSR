@@ -80,7 +80,7 @@ def main(path, output, stride, patch, random=False):
     for i in range(int(g_shape[1])):
         for j in range(250, g_shape[0] - patch - 250, stride):
             for k in range(250, g_shape[2] - patch - 250, stride):
-                data[count, :, :, 0] = cv2.resize(f[j//SCALE:j+patch//SCALE, i, k//SCALE:k//SCALE+patch//SCALE], (patch,patch), interpolation=cv2.INTER_CUBIC)
+                data[count, :, :, 0] = cv2.resize(f[j//SCALE:(j+patch)//SCALE, i, k//SCALE:k//SCALE+patch//SCALE], (patch,patch), interpolation=cv2.INTER_CUBIC)
                 label[count, :, :, 0] = g[j:j+patch, i, k:k+patch]
                 try:
                     data[count, :, :, 0] = ((data[count, :, :, 0] - data[count, :, :, 0].min()) * 1.0000000 / (data[count, :, :, 0].max() - data[count, :, :, 0].min()))
