@@ -58,7 +58,7 @@ if __name__ == '__main__':
     model = Conv2D(1, (3, 3), padding='same', kernel_initializer='he_normal')(model)
     res_img = model
 
-    output_img = merge.Subtract()([res_img, input_img])
+    output_img = merge.Add()([res_img, input_img])
 
     model = Model(input_img, output_img)
 
@@ -67,6 +67,7 @@ if __name__ == '__main__':
     vdsr.load_weights(w_path)
     li = os.listdir(img_path)
 
+    vdsr.summary()
     target_path = '%s/%s/' % (img_path, dst_path)
     os.makedirs(target_path, exist_ok=True)
     for filename in li:
