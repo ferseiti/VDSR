@@ -41,8 +41,8 @@ def main(path, output, stride, patch, random=False):
     # f_total_patches = (((f_shape[0] - patch)//stride) + 1)**2
     # f_total_patches *= f_shape[1]
 
-    g_total_patches = (((g_shape[0] - (patch*2))//stride) + 1)**2
-    g_total_patches *= g_shape[1]
+    g_total_patches = (((g_shape[0] - 500 - (patch*2))//stride) + 1)**2
+    g_total_patches *= g_shape[1] - 500
     f_total_patches = g_total_patches
 
     print('Total data patches {}'.format(f_total_patches))
@@ -59,10 +59,10 @@ def main(path, output, stride, patch, random=False):
     for i in range(int(g_shape[1])):
         if not found:
             print('Not found yet')
-            for j in range(0, g_shape[0] - patch, stride):
+            for j in range(250, g_shape[0] - patch - 250, stride):
                 if not found:
                     print('Not found yet')
-                    for k in range(0, g_shape[2] - patch, stride):
+                    for k in range(250, g_shape[2] - patch - 250, stride):
                         if not (f[j:j+patch, i, k:k+patch].max() - f[j:j+patch, i, k:k+patch].min() == 0.0) or not (g[j:j+patch, i, k:k+patch].max() - g[j:j+patch, i, k:k+patch].min() == 0.0):
                             good_data = cv2.resize(f[j//SCALE:j+patch//SCALE, i, k//SCALE:k//SCALE+patch//SCALE], (patch,patch), interpolation=cv2.INTER_CUBIC)
                             good_label = g[j:j+patch, i, k:k+patch]
@@ -77,8 +77,8 @@ def main(path, output, stride, patch, random=False):
     count = 0
     
     for i in range(int(g_shape[1])):
-        for j in range(0, g_shape[0] - patch, stride):
-            for k in range(0, g_shape[2] - patch, stride):
+        for j in range(250, g_shape[0] - patch - 250, stride):
+            for k in range(250, g_shape[2] - patch - 250, stride):
                 data[count, :, :, 0] = cv2.resize(f[j//SCALE:j+patch//SCALE, i, k//SCALE:k//SCALE+patch//SCALE], (patch,patch), interpolation=cv2.INTER_CUBIC)
                 label[count, :, :, 0] = g[j:j+patch, i, k:k+patch]
                 try:
