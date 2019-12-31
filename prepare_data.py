@@ -49,7 +49,6 @@ def main(path, output, stride, patch, random=False):
     print('Total data patches {}'.format(f_total_patches))
     print('Total label patches {}'.format(g_total_patches))
 
-    sys.exit()
     data = numpy.empty((int(f_total_patches), patch, patch, 1))
     label = numpy.empty((int(g_total_patches), patch, patch, 1))
 
