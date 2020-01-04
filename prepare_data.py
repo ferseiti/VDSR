@@ -51,7 +51,7 @@ def main(path, output, stride, patch, random=False, border_size=0):
     print('Total label patches {}'.format(g_total_patches))
 
     data = numpy.empty((int(f_total_patches), patch, patch, 1))
-    label = numpy.empty((int(g_total_patches), patch-BORDER, patch-BORDER, 1))
+    label = numpy.empty((int(g_total_patches), patch-(BORDER*2), patch-(BORDER*2), 1))
 
     import warnings
     numpy.seterr(all='raise')
