@@ -4,9 +4,10 @@ import cv2
 import sys
 import argparse
 
-def main(path, output, stride, patch, random=False):
+def main(path, output, stride, patch, random=False, border_size=0):
 
     count = 0
+    BORDER = border_size
     SCALE = 2
     print('Data will be at {} with stride {}, with patch size {}.'.format(path, stride, patch))
 
@@ -50,7 +51,7 @@ def main(path, output, stride, patch, random=False):
     print('Total label patches {}'.format(g_total_patches))
 
     data = numpy.empty((int(f_total_patches), patch, patch, 1))
-    label = numpy.empty((int(g_total_patches), patch, patch, 1))
+    label = numpy.empty((int(g_total_patches), patch-BORDER, patch-BORDER, 1))
 
     import warnings
     numpy.seterr(all='raise')
@@ -66,7 +67,7 @@ def main(path, output, stride, patch, random=False):
                     for k in range(250, g_shape[2] - patch - 250, stride):
                         if not (f[j:j+patch, i, k:k+patch].max() - f[j:j+patch, i, k:k+patch].min() == 0.0) or not (g[j:j+patch, i, k:k+patch].max() - g[j:j+patch, i, k:k+patch].min() == 0.0):
                             good_data = cv2.resize(f[j//SCALE:j+patch//SCALE, i, k//SCALE:k//SCALE+patch//SCALE], (patch,patch), interpolation=cv2.INTER_CUBIC)
-                            good_label = g[j:j+patch, i, k:k+patch]
+                            good_label = g[j+BORDER:j+patch-BORDER, i, k+BORDER:k+patch-BORDER]
                             good_data = (good_data - good_data.min()) * 1.0000000 / (good_data.max() - good_data.min())
                             good_label = (good_label - good_label.min()) * 1.0000000 / (good_label.max() - good_label.min())
                             found = True
@@ -81,7 +82,7 @@ def main(path, output, stride, patch, random=False):
         for j in range(250, g_shape[0] - patch - 250, stride):
             for k in range(250, g_shape[2] - patch - 250, stride):
                 data[count, :, :, 0] = cv2.resize(f[j//SCALE:(j+patch)//SCALE, i, k//SCALE:k//SCALE+patch//SCALE], (patch,patch), interpolation=cv2.INTER_CUBIC)
-                label[count, :, :, 0] = g[j:j+patch, i, k:k+patch]
+                label[count, :, :, 0] = g[j+BORDER:j+patch-BORDER, i, k+BORDER:k+patch-BORDER]
                 try:
                     data[count, :, :, 0] = ((data[count, :, :, 0] - data[count, :, :, 0].min()) * 1.0000000 / (data[count, :, :, 0].max() - data[count, :, :, 0].min()))
                     label[count, :, :, 0] = ((label[count, :, :, 0] - label[count, :, :, 0].min()) * 1.0000000 / (label[count, :, :, 0].max() - label[count, :, :, 0].min()))
@@ -116,6 +117,7 @@ if __name__ == '__main__':
     parser.add_argument('-s', '--stride', help='Size of the stride between subpatchs.', required=True, type=int)
     parser.add_argument('-p', '--patch-size', help='Patch size.', required=True, type=int)
     parser.add_argument('-o', '--output-path', help='Path where the data will be saved.', required=True)
+    parser.add_argument('-b', '--border-size', help='Border size.', required=True, type=int, default=0)
     parser.add_argument('-r', '--randomize', help='Wether to randomize data order or not.', action='store_true')
 
     arguments = parser.parse_args()
@@ -123,9 +125,10 @@ if __name__ == '__main__':
     path = arguments.path
     stride = int(arguments.stride)
     patch = int(arguments.patch_size)
+    border = int(arguments.border_size)
     output = arguments.output_path
     random = False
     if arguments.randomize:
         random = True
 
-    main(path, output, stride, patch, random)
+    main(path, output, stride, patch, random, border_size)
