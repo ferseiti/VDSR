@@ -125,7 +125,7 @@ if __name__ == '__main__':
     path = arguments.path
     stride = int(arguments.stride)
     patch = int(arguments.patch_size)
-    border = int(arguments.border_size)
+    border_size = int(arguments.border_size)
     output = arguments.output_path
     random = False
     if arguments.randomize:
