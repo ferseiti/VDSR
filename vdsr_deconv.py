@@ -4,7 +4,7 @@ from __future__ import print_function
 import keras
 from keras import backend as K
 from keras.models import Sequential, Model
-from keras.layers import Dense, Activation, Lambda, BatchNormalization
+from keras.layers import Dense, Activation, Lambda, BatchNormalization, LeakyReLU
 from keras.layers import Conv2DTranspose, Conv2D, MaxPooling2D, Input, ZeroPadding2D, merge, add
 import tensorflow as tf
 from keras.models import load_model
@@ -282,7 +282,7 @@ def model_train(img_size, batch_size, epochs, optimizer, learning_rate, train_li
 
         input_img = Input(shape=img_size)
 
-        model = Conv2D(64, (3, 3), padding='valid', kernel_initializer='he_normal', use_bias=False)(input_img)
+        model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal', use_bias=False)(input_img)
         model = BatchNormalization()(model)
         model_0 = Activation('relu')(model)
 
@@ -294,22 +294,26 @@ def model_train(img_size, batch_size, epochs, optimizer, learning_rate, train_li
             model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal', use_bias=False)(model_0)
             model = BatchNormalization()(model)
             model = Activation('relu')(model)
+            print(_)
             for _ in range(int(total_conv/residual_block_num)-1):
-                model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
+                model = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal', use_bias=False)(model)
+                model = BatchNormalization()(model)
                 model = Activation('relu')(model)
                 model_0 = add([model, model_0])
+                print(_)
 
-        model = Conv2DTranspose(64, (3, 3), padding='same', kernel_initializer='he_normal')(model)
-        model = Conv2D(1, (3, 3), padding='valid', kernel_initializer='he_normal')(model)
+        model = Conv2DTranspose(64, (5, 5), padding='valid', kernel_initializer='he_normal', use_bias=False)(model)
+        model = BatchNormalization()(model)
+        model = LeakyReLU()(model)
+        model = Conv2D(1, (5, 5), padding='valid', kernel_initializer='he_normal')(model)
         
         res_img = model
 
-        input_img1 = crop(1,2,-2)(input_img)
-        input_img1 = crop(2,2,-2)(input_img1)
+        #input_img1 = crop(1,22,-22)(input_img)
+        #input_img1 = crop(2,22,-22)(input_img1)
 
         print(input_img.shape)
-        print(input_img1.shape)
-        output_img = merge.Add()([res_img, input_img1])
+        output_img = merge.Add()([res_img, input_img])
         # output_img = res_img
         model = Model(input_img, output_img)
 
@@ -327,18 +331,18 @@ def model_train(img_size, batch_size, epochs, optimizer, learning_rate, train_li
 
     mycallback = MyCallback(model)
     timestamp = time.strftime("%m%d-%H%M", time.localtime(time.time()))
-    csv_logger = callbacks.CSVLogger('data/callbacks/training_{}.log'.format(timestamp))
-    filepath="./checkpoints/weights-improvement-{epoch:03d}-{PSNR:.2f}.hdf5"
+    csv_logger = callbacks.CSVLogger('data/callbacks/deconv/training_{}.log'.format(timestamp))
+    filepath="./checkpoints/deconv/weights-improvement-{epoch:03d}-{PSNR:.2f}-{ssim:.2f}.hdf5"
     checkpoint = ModelCheckpoint(filepath, monitor=PSNR, verbose=1, mode='max')
     callbacks_list = [mycallback, checkpoint, csv_logger]
 
-    with open('./model/vdsr_architecture.json', 'w') as f:
+    with open('./model/deconv/vdsr_architecture.json', 'w') as f:
         f.write(model.to_json())
 
     history = model.fit_generator(image_gen(train_list, batch_size=batch_size), 
-                        steps_per_epoch=(705600//8)*len(train_list) // batch_size,
+                        steps_per_epoch=(409600//8)*len(train_list) // batch_size,
                         validation_data=image_gen(validation_list,batch_size=batch_size),
-                        validation_steps=(705600//8)*len(validation_list) // batch_size,
+                        validation_steps=(409600//8)*len(validation_list) // batch_size,
                         epochs=epochs,
                         workers=1024,
                         callbacks=callbacks_list,
